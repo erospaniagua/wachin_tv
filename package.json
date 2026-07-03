@@ -1,0 +1,28 @@
+{
+  "name": "wachin-tv",
+  "version": "1.0.0",
+  "description": "Simple video streaming service backed by a private S3 bucket (presigned URLs).",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "migrate": "node db/migrate.js",
+    "user:add": "node scripts/add-user.js",
+    "ingest:scan": "node ingest/scan.js",
+    "ingest:run": "node ingest/run.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.632.0",
+    "@aws-sdk/lib-storage": "^3.1079.0",
+    "@aws-sdk/s3-request-presigner": "^3.632.0",
+    "cookie-parser": "^1.4.6",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "nodemailer": "^6.9.14",
+    "pg": "^8.12.0"
+  }
+}

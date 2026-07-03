@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Admin · wachin.tv</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <h1><a href="/" class="brand-link">wachin<span>.tv</span></a> <small class="admin-tag">admin</small></h1>
+      <div class="user-box">
+        <a href="/" class="admin-link">← Library</a>
+        <button id="logout-btn" class="logout-btn">Sign out</button>
+      </div>
+    </header>
+
+    <main id="app">
+      <section class="admin-panel">
+        <h2>Add a user</h2>
+        <p class="muted">Only people you add here can sign in. They log in with a magic link — no password.</p>
+        <form id="add-form" class="admin-form">
+          <input id="name" type="text" placeholder="Name" required />
+          <input id="email" type="email" placeholder="email@example.com" required />
+          <label class="check"><input id="role-admin" type="checkbox" /> Admin</label>
+          <label class="check"><input id="send-invite" type="checkbox" checked /> Email sign-in link now</label>
+          <button type="submit" id="add-btn">Add user</button>
+        </form>
+        <p id="add-msg" class="admin-msg"></p>
+      </section>
+
+      <section class="admin-panel">
+        <h2>Users</h2>
+        <div id="user-list"><p class="muted">Loading…</p></div>
+      </section>
+    </main>
+
+    <script src="admin.js"></script>
+  </body>
+</html>

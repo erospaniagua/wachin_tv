@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>wachin.tv</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <h1 id="brand">wachin<span>.tv</span></h1>
+      <div class="user-box">
+        <a id="admin-link" href="/admin.html" class="admin-link" hidden>Admin</a>
+        <span id="whoami" class="whoami"></span>
+        <button id="logout-btn" class="logout-btn">Sign out</button>
+      </div>
+    </header>
+
+    <main id="app">
+      <!-- Player (hidden until something is playing) -->
+      <section id="player-wrap" class="player" hidden>
+        <video id="player" controls playsinline crossorigin="anonymous"></video>
+        <div class="player-bar">
+          <p id="now-playing" class="now-playing"></p>
+          <button id="download-btn" class="download-btn">⤓ Download</button>
+        </div>
+      </section>
+
+      <!-- Browse grid -->
+      <section id="browse"></section>
+
+      <!-- Title detail -->
+      <section id="detail" hidden>
+        <button id="back-btn" class="back-btn">← Back</button>
+        <div id="detail-head" class="detail-head"></div>
+        <div id="detail-body"></div>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>

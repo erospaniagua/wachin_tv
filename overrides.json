@@ -1,0 +1,17 @@
+{
+  "_readme": "Fix TMDB matches without renaming files. Key = exact folder name (movies) or show folder (series). Per entry use ONE of: {\"tmdb_id\": 123} to force an exact title, {\"title\": \"Name\", \"year\": 2013} to re-search, or {\"skip\": true} to exclude it.",
+  "movies": {
+    "filfth": { "title": "Filth", "year": 2013 },
+    "Solaris By JNK": { "title": "Solaris", "year": 1972 },
+    "Melancolia": { "title": "Melancholia", "year": 2011 },
+    "Los Idiotas (Lars Von Trier)": { "title": "The Idiots", "year": 1998 },
+    "Love (Gaspar Noe) [RinconCinefilo.com]": { "title": "Love", "year": 2015 },
+    "www.torrenting.com - Adam.Curtis.HyperNormalisation.2016.WEB.h264-ROFL (2016)": { "title": "HyperNormalisation", "year": 2016 },
+    "Nymphomaniac Volume II [SubsEspañol][RinconCinefilo.com]": { "title": "Nymphomaniac: Vol. II", "year": 2013 }
+  },
+  "series": {
+    "ulgy americans": { "title": "Ugly Americans" },
+    "The Expance": { "title": "The Expanse" },
+    "monster": { "tmdb_id": 30981 }
+  }
+}
