@@ -3,7 +3,7 @@ import { readFileSync, existsSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 import { pool } from '../db/pool.js';
 import { convert } from './convert.js';
-import { uploadFile } from './s3.js';
+import { publishFile } from './publish.js';
 import { commitCatalog } from './catalog.js';
 
 // --- args ---
@@ -80,12 +80,12 @@ async function main() {
         console.log('   (dry-run) would transcode → upload → catalog');
       } else {
         const out = await convert(it, { priority, signal: ctrl.signal, extraArgs: CLIP });
-        process.stdout.write('   uploading…');
-        await uploadFile(out.videoPath, it.targetKey, 'video/mp4');
+        process.stdout.write('   saving…');
+        publishFile(out.videoPath, it.targetKey);
         const subMeta = [];
         for (const s of out.subs) {
           const key = it.targetKey.replace(/video\.mp4$/, `subs/${s.lang}.vtt`);
-          await uploadFile(s.path, key, 'text/vtt');
+          publishFile(s.path, key);
           subMeta.push({ lang: s.lang, label: s.label, key });
         }
         const mediaId = await commitCatalog(it, out, it.targetKey, subMeta);

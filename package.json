@@ -10,7 +10,8 @@
     "migrate": "node db/migrate.js",
     "user:add": "node scripts/add-user.js",
     "ingest:scan": "node ingest/scan.js",
-    "ingest:run": "node ingest/run.js"
+    "ingest:run": "node ingest/run.js",
+    "pull": "node scripts/pull-from-s3.js"
   },
   "engines": {
     "node": ">=18"

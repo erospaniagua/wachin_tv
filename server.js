@@ -3,53 +3,62 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { createReadStream, statSync } from 'node:fs';
 import { authRouter, requireAuth, requireAdmin, issueMagicLink } from './auth.js';
 import { pool } from './db/pool.js';
 import { notify } from './notify.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const { MEDIA_ROOT, PORT = '3000' } = process.env;
 
-const {
-  AWS_REGION = 'us-east-1',
-  S3_BUCKET,
-  AWS_ACCESS_KEY_ID,
-  AWS_SECRET_ACCESS_KEY,
-  URL_TTL_SECONDS = '3600',
-  PORT = '3000',
-} = process.env;
-
-if (!S3_BUCKET) {
-  console.error('Missing S3_BUCKET. Copy .env.example to .env and fill it in.');
-  process.exit(1);
+if (!MEDIA_ROOT) {
+  console.warn('Warning: MEDIA_ROOT not set — video streaming will 500 until you set it in .env.');
 }
 
-const credentials =
-  AWS_ACCESS_KEY_ID && AWS_SECRET_ACCESS_KEY
-    ? { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY }
-    : undefined;
+const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 
-const s3 = new S3Client({ region: AWS_REGION, credentials });
-const ttl = Math.max(60, parseInt(URL_TTL_SECONDS, 10) || 3600);
+// Resolve a catalog key to an absolute path, refusing anything that escapes
+// MEDIA_ROOT (defense-in-depth; keys come from our own DB).
+function mediaPath(key) {
+  const root = path.resolve(MEDIA_ROOT || '.');
+  const full = path.resolve(root, key);
+  if (full !== root && !full.startsWith(root + path.sep)) return null;
+  return full;
+}
 
-const esc = (s) =>
-  String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+// Stream a local file with HTTP Range support (so the player can seek).
+function streamFile(req, res, filePath, contentType, { download, filename } = {}) {
+  let stat;
+  try { stat = statSync(filePath); } catch { return res.status(404).json({ error: 'File not found.' }); }
+  const total = stat.size;
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('Accept-Ranges', 'bytes');
+  if (download) res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
 
-// Presign a GET for a trusted key that came from our own catalog DB.
-function signKey(key, { download = false, filename } = {}) {
-  const command = new GetObjectCommand({
-    Bucket: S3_BUCKET,
-    Key: key,
-    ...(download && {
-      ResponseContentDisposition: `attachment; filename="${filename || path.basename(key)}"`,
-    }),
-  });
-  return getSignedUrl(s3, command, { expiresIn: ttl });
+  const range = req.headers.range;
+  if (range) {
+    const m = /bytes=(\d*)-(\d*)/.exec(range);
+    let start = m && m[1] ? parseInt(m[1], 10) : 0;
+    let end = m && m[2] ? parseInt(m[2], 10) : total - 1;
+    if (Number.isNaN(start) || start < 0) start = 0;
+    if (Number.isNaN(end) || end >= total) end = total - 1;
+    if (start > end) {
+      res.status(416).setHeader('Content-Range', `bytes */${total}`);
+      return res.end();
+    }
+    res.status(206);
+    res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
+    res.setHeader('Content-Length', end - start + 1);
+    createReadStream(filePath, { start, end }).pipe(res);
+  } else {
+    res.status(200);
+    res.setHeader('Content-Length', total);
+    createReadStream(filePath).pipe(res);
+  }
 }
 
 const app = express();
-app.set('trust proxy', 1); // Railway terminates TLS at a proxy; needed for secure cookies
+app.set('trust proxy', 1); // behind Cloudflare Tunnel / a proxy → needed for secure cookies
 app.use(express.json());
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -91,7 +100,6 @@ app.get('/api/titles/:slug', requireAuth, async (req, res) => {
       );
       return res.json({ title: t, media: m || null });
     }
-
     const { rows: episodes } = await pool.query(`
       select e.season, e.episode, e.name, m.id as media_id, m.duration_sec
       from episodes e join media m on m.episode_id = e.id
@@ -103,25 +111,56 @@ app.get('/api/titles/:slug', requireAuth, async (req, res) => {
   }
 });
 
-// Playback URL for a media item + its subtitle tracks (all presigned).
+// Playback info: the stream URL + subtitle track URLs (all same-origin routes).
 app.get('/api/media/:id/play', requireAuth, async (req, res) => {
   try {
-    const { rows: [m] } = await pool.query('select id, s3_key from media where id = $1', [req.params.id]);
+    const { rows: [m] } = await pool.query('select id from media where id = $1', [req.params.id]);
     if (!m) return res.status(404).json({ error: 'Not found.' });
-    const url = await signKey(m.s3_key);
     const { rows: subs } = await pool.query(
-      'select lang, label, s3_key from subtitles where media_id = $1 order by lang', [m.id]);
-    const subtitles = await Promise.all(
-      subs.map(async (s) => ({ lang: s.lang, label: s.label, url: await signKey(s.s3_key) })));
-    res.json({ url, subtitles });
+      'select lang, label from subtitles where media_id = $1 order by lang', [m.id]);
+    res.json({
+      url: `/api/media/${m.id}/stream`,
+      subtitles: subs.map((s) => ({ lang: s.lang, label: s.label, url: `/api/media/${m.id}/subs/${s.lang}` })),
+    });
   } catch (err) {
-    if (err.code === '22P02') return res.status(400).json({ error: 'Bad id.' }); // invalid uuid
+    if (err.code === '22P02') return res.status(400).json({ error: 'Bad id.' });
     console.error('play failed:', err);
     res.status(500).json({ error: 'Could not start playback.' });
   }
 });
 
-// Download URL — logs an event and pings the admin on Telegram.
+// Stream the video from local disk.
+app.get('/api/media/:id/stream', requireAuth, async (req, res) => {
+  try {
+    const { rows: [m] } = await pool.query('select s3_key from media where id = $1', [req.params.id]);
+    if (!m) return res.status(404).json({ error: 'Not found.' });
+    const fp = mediaPath(m.s3_key);
+    if (!fp) return res.status(400).json({ error: 'Bad path.' });
+    streamFile(req, res, fp, 'video/mp4');
+  } catch (err) {
+    if (err.code === '22P02') return res.status(400).json({ error: 'Bad id.' });
+    console.error('stream failed:', err);
+    res.status(500).json({ error: 'Could not stream.' });
+  }
+});
+
+// Serve a subtitle track (WebVTT) from local disk.
+app.get('/api/media/:id/subs/:lang', requireAuth, async (req, res) => {
+  try {
+    const { rows: [s] } = await pool.query(
+      'select s3_key from subtitles where media_id = $1 and lang = $2', [req.params.id, req.params.lang]);
+    if (!s) return res.status(404).json({ error: 'Not found.' });
+    const fp = mediaPath(s.s3_key);
+    if (!fp) return res.status(400).json({ error: 'Bad path.' });
+    streamFile(req, res, fp, 'text/vtt; charset=utf-8');
+  } catch (err) {
+    if (err.code === '22P02') return res.status(400).json({ error: 'Bad id.' });
+    console.error('subs failed:', err);
+    res.status(500).json({ error: 'Could not load subtitles.' });
+  }
+});
+
+// Download — streams as an attachment, logs an event, pings the admin.
 app.get('/api/media/:id/download', requireAuth, async (req, res) => {
   try {
     const { rows: [m] } = await pool.query(`
@@ -132,22 +171,23 @@ app.get('/api/media/:id/download', requireAuth, async (req, res) => {
       left join titles st on st.id = e.series_id
       where m.id = $1`, [req.params.id]);
     if (!m) return res.status(404).json({ error: 'Not found.' });
+    const fp = mediaPath(m.s3_key);
+    if (!fp) return res.status(400).json({ error: 'Bad path.' });
 
     const label = m.season != null
       ? `${m.title} S${String(m.season).padStart(2, '0')}E${String(m.episode).padStart(2, '0')}`
       : m.title;
     const filename = label.replace(/[^\w .-]/g, '').trim() + '.mp4';
-    const url = await signKey(m.s3_key, { download: true, filename });
 
     pool.query('insert into events (user_id, type, media_id, detail) values ($1, $2, $3, $4)',
       [req.user.id, 'download', m.id, { title: label }]).catch((e) => console.error('event log failed', e));
     notify(`⬇️ <b>${esc(req.user.name)}</b> downloaded <b>${esc(label)}</b>`);
 
-    res.json({ url });
+    streamFile(req, res, fp, 'video/mp4', { download: true, filename });
   } catch (err) {
     if (err.code === '22P02') return res.status(400).json({ error: 'Bad id.' });
     console.error('download failed:', err);
-    res.status(500).json({ error: 'Could not create download URL.' });
+    res.status(500).json({ error: 'Could not download.' });
   }
 });
 
@@ -169,10 +209,8 @@ app.post('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
   const name = String(req.body?.name || '').trim();
   const role = req.body?.role === 'admin' ? 'admin' : 'user';
   const invite = req.body?.invite === true;
-
   if (!name) return res.status(400).json({ error: 'Name is required.' });
   if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'A valid email is required.' });
-
   try {
     const { rows } = await pool.query(
       `insert into users (email, name, role) values ($1, $2, $3)
@@ -217,5 +255,5 @@ app.delete('/api/admin/users/:id', requireAuth, requireAdmin, async (req, res) =
 
 app.listen(parseInt(PORT, 10), () => {
   console.log(`wachin.tv running at http://localhost:${PORT}`);
-  console.log(`Catalog-backed streaming from bucket "${S3_BUCKET}" (region ${AWS_REGION})`);
+  console.log(`Serving local media from ${MEDIA_ROOT || '(MEDIA_ROOT not set!)'}`);
 });
